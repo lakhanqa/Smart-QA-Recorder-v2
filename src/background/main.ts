@@ -1,9 +1,24 @@
-import { Eko } from "@eko-ai/eko";
+import { Eko, Agent, Log } from "@eko-ai/eko";
 import type { LLMs, StreamCallbackMessage, StreamCallback, HumanCallback } from "@eko-ai/eko";
 import { BrowserAgent } from "@eko-ai/eko-extension";
+import { FakerTool } from "./fakerTool";
 
 let isRecording = false;
 let recordedSteps: any[] = [];
+let activeEko: Eko | null = null;
+let activeTaskId: string | null = null;
+
+export async function stopDiscovery(): Promise<void> {
+  if (activeEko && activeTaskId) {
+    const task = activeEko.getTask(activeTaskId);
+    if (task) {
+      task.abort();
+      printLog("Stopping discovery and generating test cases...", "info");
+    }
+    activeEko = null;
+    activeTaskId = null;
+  }
+}
 
 export async function getLLMConfig(name: string = "llmConfig"): Promise<any> {
   let result = await chrome.storage.sync.get([name]);
@@ -25,15 +40,15 @@ URL: ${pageContext.url}
 Interactive Elements:
 ${pageContext.elements.map((el: any) => `- ${el.tagName}: ${el.text || el.placeholder || el.role || 'element'} (ID: ${el.id || 'N/A'})`).join('\n')}
 
-Each object in the JSON array must have these exact keys:
-1. "id": A unique identifier (e.g., "TC_001").
-2. "title": A short description of the test purpose.
-3. "preconditions": Prerequisite steps or state.
-4. "steps": Detailed, step-by-step actions.
-5. "data": Input values or files required.
-6. "expected": Expected behavior or outcome.
-7. "actual": Observed behavior (leave empty or put "Pending").
-8. "status": Final verdict (e.g., "Not Run").`;
+Each object in the JSON array must have these exact keys and follow these descriptions:
+1. "id": Test Case ID: A unique identifier for every test case (e.g., TC001, Login_01).
+2. "title": Test Scenario/Title: A brief description of what functionality is being tested.
+3. "preconditions": Preconditions (Prerequisites): Any conditions that must be met before executing the test (e.g., "User must be registered," "Browser is open").
+4. "steps": Test Steps: A detailed, numbered list of actions to be performed.
+5. "data": Test Data: The input values required to execute the steps (e.g., usernames, specific numbers, files).
+6. "expected": Expected Result: The anticipated outcome based on requirements.
+7. "actual": Actual Result: Observed behavior (set to "Pending" for initial generation).
+8. "status": Status: The result of the test (Pass, Fail, Blocked, Not Run). Set to "Not Run" by default.`;
 
   return await callLLM(prompt, config);
 }
@@ -75,94 +90,102 @@ async function callLLM(prompt: string, config: any): Promise<string> {
   return data.choices?.[0]?.message?.content || "Failed to generate test cases.";
 }
 
+export async function exploreAndGenerateTestCases(): Promise<string> {
+  // Simplify the prompt for the planner. The detailed instructions remain to guide the agent, 
+  // but we remove the strict "ONLY JSON" requirement from the initial planning task
+  // to avoid confusing Eko's XML-based planner.
+  const explorationPrompt = `Perform a thorough discovery scan of the current page. 
+Map out all dynamic behaviors, identify mandatory fields, test form validations, handle duplicate check flows, and explore sections that appear or disappear based on input.
+Use the "faker_generate_data" tool to provide realistic input values during exploration.
+
+FINALLY: Summarize all unique scenarios discovered.
+Your LAST STEP must be to PRINT a JSON array containing the discovered manual test cases.
+Each object MUST have these 8 fields: "id", "title", "preconditions", "steps", "data", "expected", "actual", "status".
+Return ONLY the JSON array inside markdown code blocks.`;
+
+  const ekoInstance = await initializeEko(explorationPrompt);
+  if (!ekoInstance) throw new Error("Failed to initialize Eko");
+
+  const taskId = `discovery-${Date.now()}`;
+  activeEko = ekoInstance;
+  activeTaskId = taskId;
+
+  return new Promise((resolve, reject) => {
+    ekoInstance.run(explorationPrompt, taskId)
+      .then(res => {
+        resolve(res.result);
+      })
+      .catch(err => {
+        if (err?.name === "AbortError" || err?.message?.includes("abort")) {
+          printLog("Discovery aborted. Finalizing report...", "success");
+          // If aborted, we could potentially call a summary LLM here,
+          // but for now we'll just resolve with it.
+          resolve("Discovery stopped by user.");
+        } else {
+          reject(err);
+        }
+      })
+      .finally(() => {
+        if (activeTaskId === taskId) {
+          activeEko = null;
+          activeTaskId = null;
+        }
+      });
+  });
+}
+
 export async function main(prompt: string): Promise<Eko> {
+  const eko = await initializeEko(prompt);
+  if (eko) {
+    eko.run(prompt)
+      .then((res) => {
+        printLog(res.result, res.success ? "success" : "error");
+      })
+      .catch((error) => {
+        // ... (Error handling remains same inside initializeEko or here)
+        console.error("Execution error:", error);
+      })
+      .finally(() => {
+        chrome.storage.local.set({ running: false });
+        chrome.runtime.sendMessage({ type: "stop" });
+      });
+  }
+  return eko;
+}
+
+export async function initializeEko(prompt: string): Promise<Eko | null> {
   let config = await getLLMConfig();
   if (!config || !config.apiKey) {
-    printLog("Please configure apiKey, configure in the Smart QA Automation extension options of the browser extensions.", "error");
+    printLog("Please configure apiKey in options.", "error");
     chrome.runtime.openOptionsPage();
-    chrome.storage.local.set({ running: false });
-    chrome.runtime.sendMessage({ type: "stop" });
-    return;
+    return null;
   }
 
-  // Log configuration for debugging (without exposing the full API key)
-  printLog(`Using LLM: ${config.llm}, Model: ${config.modelName}, BaseURL: ${config.options?.baseURL}`, "info");
-  printLog(`API Key configured: ${config.apiKey ? 'Yes (length: ' + config.apiKey.length + ')' : 'No'}`, "info");
-
-  // Validate configuration before creating LLMs object
-  if (!config.options?.baseURL) {
-    printLog("Error: Base URL is not configured properly", "error");
-    return;
+  // Validations
+  if (!config.options?.baseURL || !config.modelName) {
+    printLog("Error: LLM Base URL or Model Name not configured", "error");
+    return null;
   }
 
-  if (!config.modelName) {
-    printLog("Error: Model name is not configured", "error");
-    return;
-  }
-
-  // Additional validation for OpenRouter
-  if (config.llm === 'openrouter') {
-    if (!config.apiKey.startsWith('sk-or-')) {
-      printLog("Warning: OpenRouter API keys typically start with 'sk-or-'", "error");
-    }
-    if (!config.options.baseURL.includes('openrouter.ai')) {
-      printLog("Warning: Base URL should be OpenRouter endpoint", "error");
-    }
-    // Check if model is free tier
-    if (config.modelName.includes(':free')) {
-      printLog("Using free tier model - check OpenRouter limits", "info");
-    }
-  }
-
-  // Additional validation for Google Gemini
-  if (config.llm === 'google') {
-    if (!config.apiKey.startsWith('AIza')) {
-      printLog("Warning: Google API keys typically start with 'AIza'", "error");
-    }
-    if (!config.options.baseURL.includes('googleapis.com')) {
-      printLog("Warning: Base URL should be Google API endpoint", "error");
-    }
-    printLog("Using Google Gemini API directly - better rate limits than OpenRouter", "info");
-  }
-
-  // Additional validation for Groq
-  if (config.llm === 'groq') {
-    if (!config.apiKey.startsWith('gsk_')) {
-      printLog("Warning: Groq API keys typically start with 'gsk_'", "error");
-    }
-    if (!config.options.baseURL.includes('api.groq.com')) {
-      printLog("Warning: Base URL should be Groq API endpoint", "error");
-    }
-    printLog("Using Groq API - ultra-fast inference speeds", "info");
-  }
+  // Enable internal Eko debug logging to help diagnose planning/execution issues
+  (Log as any).setLevel(0); // 0 = LogLevel.DEBUG
 
   const llms: LLMs = {
-    default: {
-      provider: config.llm === 'groq' ? 'openai' : config.llm as any, // Groq uses OpenAI-compatible API
+    [config.llm]: {
+      provider: config.llm === 'groq' ? 'openai' : config.llm as any,
       model: config.modelName,
       apiKey: config.apiKey,
       config: {
         baseURL: config.options.baseURL,
-        // Add timeout and other error handling configs
-        timeout: 60000, // 60 seconds timeout
-        // Add provider-specific config
+        timeout: 60000,
         ...(config.llm === 'openrouter' && {
-          headers: {
-            'HTTP-Referer': 'https://eko.ai',
-            'X-Title': 'Smart QA Automation Browser Agent'
-          }
-        }),
-        ...(config.llm === 'google' && {
-          headers: {
-            'Content-Type': 'application/json'
-          }
+          headers: { 'HTTP-Referer': 'https://eko.ai', 'X-Title': 'Smart QA Automation' }
         }),
         ...(config.llm === 'groq' && {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${config.apiKey}`
           },
-          // Groq-specific configurations to ensure proper message formatting
           messageFormat: 'openai',
           enforceStringContent: true
         })
@@ -170,234 +193,45 @@ export async function main(prompt: string): Promise<Eko> {
     },
   };
 
-  // Log the LLM configuration (without API key)
-  const actualProvider = config.llm === 'groq' ? 'openai' : config.llm;
-  printLog(`LLM Config: Provider=${config.llm}, Actual Provider=${actualProvider}, Model=${config.modelName}, BaseURL=${config.options.baseURL}`, "info");
-
   let callback: StreamCallback & HumanCallback = {
     onMessage: async (message: StreamCallbackMessage) => {
       if (message.type == "workflow") {
+        // XML might contain characters that break parsing if re-logged in some contexts, 
+        // but here we just print it.
         printLog("Plan\n" + message.workflow.xml, "info", !message.streamDone);
       } else if (message.type == "text") {
         printLog(message.text, "info", !message.streamDone);
       } else if (message.type == "tool_streaming") {
         printLog(`${message.agentName} > ${message.toolName}\n${message.paramsText}`, "info", true);
       } else if (message.type == "tool_use") {
-        printLog(
-          `${message.agentName} > ${message.toolName}\n${JSON.stringify(
-            message.params
-          )}`
-        );
+        printLog(`${message.agentName} > ${message.toolName}\n${JSON.stringify(message.params)}`);
       } else if (message.type == "error") {
-        // Catch LLM-specific errors
-        printLog(`LLM Error: ${message.error || 'Unknown LLM error'}`, "error");
+        printLog(`LLM Error: ${message.error || 'Unknown error'}`, "error");
       }
-      console.log("message: ", JSON.stringify(message, null, 2));
     },
     onHumanConfirm: async (context, prompt) => {
       return confirm(prompt);
     },
   };
 
-  let agents = [new BrowserAgent()];
+  let browserAgent = new BrowserAgent([config.llm]);
+  browserAgent.addTool(new FakerTool());
 
+  // Broaden the description so the Eko planner sees it as suitable for "discovery" tasks
+  (browserAgent as any).description = "A comprehensive browser automation and discovery agent. Can navigate pages, identify interactive elements, probe dynamic behaviors, handle form validations, and generate realistic test data using faker tools.";
+
+  let agents = [browserAgent];
   try {
-    printLog(`Creating Smart QA Automation instance with LLM provider: ${config.llm}`, "info");
-    var eko = new Eko({ llms, agents, callback });
-    printLog(`Smart QA Automation instance created successfully`, "info");
-  } catch (ekoError) {
-    printLog(`Failed to create Smart QA Automation instance: ${ekoError.message}`, "error");
-    chrome.storage.local.set({ running: false });
-    chrome.runtime.sendMessage({ type: "stop" });
-    return;
-  }
-
-  printLog(`Starting Smart QA Automation with prompt: "${prompt}"`, "info");
-
-  // Test network connectivity for Groq specifically
-  if (config.llm === 'groq') {
-    printLog(`Testing Groq API connectivity...`, "info");
-    try {
-      // Simple ping to Groq API to test connectivity
-      await fetch('https://api.groq.com/openai/v1/models', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${config.apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      }).then(response => {
-        if (response.ok) {
-          printLog(`✅ Groq API connectivity test successful`, "info");
-        } else {
-          printLog(`⚠️ Groq API responded with status: ${response.status}`, "error");
-        }
-      });
-    } catch (connectError) {
-      printLog(`❌ Groq API connectivity test failed: ${connectError.message}`, "error");
-      printLog(`This may indicate network or CORS issues`, "error");
-    }
-  }
-
-  eko
-    .run(prompt)
-    .then((res) => {
-      printLog(res.result, res.success ? "success" : "error");
-    })
-    .catch((error) => {
-      // Enhanced error logging with specific API error handling
-      printLog(`Error Type: ${error.constructor.name}`, "error");
-      printLog(`Error Message: ${error.message || error.toString()}`, "error");
-
-      // Handle message format errors specifically
-      if (error.message && error.message.includes('content must be a string')) {
-        printLog(`📝 MESSAGE FORMAT ERROR: API received invalid message format`, "error");
-        printLog(`This usually happens when:`, "error");
-        printLog(`1. The framework sends non-string content (images, objects, etc.)`, "error");
-        printLog(`2. Message formatting is incompatible with the provider`, "error");
-        if (config.llm === 'groq') {
-          printLog(`3. Groq requires strict OpenAI message format compliance`, "error");
-          printLog(`4. Try switching to Google Gemini or OpenAI temporarily`, "error");
-        }
-        printLog(`5. This may be a limitation of the current Eko framework version`, "error");
-      }
-
-      // Handle fetch errors specifically
-      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-        printLog(`🌐 NETWORK ERROR: Failed to fetch from API`, "error");
-        printLog(`Possible causes:`, "error");
-        printLog(`1. Network connectivity issues`, "error");
-        printLog(`2. CORS policy blocking the request`, "error");
-        printLog(`3. API endpoint unreachable`, "error");
-        printLog(`4. Invalid base URL: ${config.options?.baseURL}`, "error");
-        if (config.llm === 'groq') {
-          printLog(`5. Groq service might be temporarily down`, "error");
-          printLog(`6. Try switching to a different provider temporarily`, "error");
-        }
-      }
-
-      // Check for specific API-related error properties
-      if (error.name === 'AI_APICallError' || error.constructor.name === 'AI_APICallError' || error.constructor.name === 'k') {
-        printLog(`This is an AI API Call Error - check your API configuration`, "error");
-        printLog(`Provider: ${config.llm}`, "error");
-        printLog(`Model: ${config.modelName}`, "error");
-        printLog(`Base URL: ${config.options?.baseURL}`, "error");
-        printLog(`API Key length: ${config.apiKey?.length || 'undefined'}`, "error");
-
-        // Provider-specific error guidance
-        if (config.llm === 'openrouter') {
-          printLog(`Common causes for OpenRouter API errors:`, "error");
-          printLog(`1. Invalid API key format or permissions`, "error");
-          printLog(`2. Model not available or rate limited`, "error");
-          printLog(`3. Request format not compatible with model`, "error");
-          printLog(`4. Free tier usage limits exceeded`, "error");
-          printLog(`5. OpenRouter service issues`, "error");
-        } else if (config.llm === 'google') {
-          printLog(`Common causes for Google Gemini API errors:`, "error");
-          printLog(`1. Invalid API key (should start with 'AIza')`, "error");
-          printLog(`2. API not enabled in Google Cloud Console`, "error");
-          printLog(`3. Billing not set up (required for API usage)`, "error");
-          printLog(`4. Model name format incorrect`, "error");
-          printLog(`5. Request quota exceeded`, "error");
-          printLog(`6. Geographic restrictions`, "error");
-        } else if (config.llm === 'groq') {
-          printLog(`Common causes for Groq API errors:`, "error");
-          printLog(`1. Invalid API key (should start with 'gsk_')`, "error");
-          printLog(`2. Rate limit exceeded (very generous limits)`, "error");
-          printLog(`3. Model name incorrect or unavailable`, "error");
-          printLog(`4. Request format not compatible`, "error");
-          printLog(`5. Message content format issues (must be strings)`, "error");
-          printLog(`6. Service temporarily unavailable`, "error");
-          printLog(`ℹ️ RECOMMENDATION: Try Google Gemini for better compatibility`, "error");
-        }
-      }
-
-      // Try to extract more error details
-      if (error.cause) {
-        printLog(`Error Cause: ${JSON.stringify(error.cause)}`, "error");
-      }
-      if (error.details) {
-        printLog(`Error Details: ${JSON.stringify(error.details)}`, "error");
-      }
-      if (error.statusCode) {
-        printLog(`Status Code: ${error.statusCode}`, "error");
-
-        // Provide specific guidance based on status code
-        switch (error.statusCode) {
-          case 429:
-            printLog(`🚨 RATE LIMITED (429): You've exceeded the rate limit or quota`, "error");
-            printLog(`Solutions:`, "error");
-            printLog(`- Wait before trying again (rate limit resets)`, "error");
-            printLog(`- Check your OpenRouter account usage/credits`, "error");
-            printLog(`- Free tier models have strict limits`, "error");
-            printLog(`- Consider upgrading to paid plan`, "error");
-            break;
-          case 401:
-            printLog(`🔑 UNAUTHORIZED (401): Invalid API key`, "error");
-            break;
-          case 403:
-            printLog(`🚫 FORBIDDEN (403): Access denied to this model`, "error");
-            break;
-          case 400:
-            printLog(`📝 BAD REQUEST (400): Invalid request format`, "error");
-            break;
-          case 500:
-            printLog(`🔥 SERVER ERROR (500): OpenRouter service issue`, "error");
-            break;
-        }
-      }
-
-      // Extract response body and headers if available
-      if (error.responseBody) {
-        printLog(`Response Body: ${JSON.stringify(error.responseBody)}`, "error");
-      }
-      if (error.responseHeaders) {
-        printLog(`Response Headers: ${JSON.stringify(error.responseHeaders)}`, "error");
-      }
-      if (error.url) {
-        printLog(`Request URL: ${error.url}`, "error");
-      }
-      if (error.requestBodyValues) {
-        printLog(`Request Body: ${JSON.stringify(error.requestBodyValues)}`, "error");
-      }
-      if (error.isRetryable) {
-        printLog(`Is Retryable: ${error.isRetryable}`, "error");
-      }
-      if (error.data) {
-        printLog(`Error Data: ${JSON.stringify(error.data)}`, "error");
-      }
-      if (error.response) {
-        printLog(`API Response Status: ${error.response.status}`, "error");
-        printLog(`API Response Headers: ${JSON.stringify(error.response.headers)}`, "error");
-        printLog(`API Response Data: ${JSON.stringify(error.response.data)}`, "error");
-      }
-      if (error.request) {
-        printLog(`Request URL: ${error.request.url || 'unknown'}`, "error");
-        printLog(`Request Method: ${error.request.method || 'unknown'}`, "error");
-      }
-      if (error.config) {
-        printLog(`Request Config: ${JSON.stringify({
-          url: error.config.url,
-          method: error.config.method,
-          headers: error.config.headers ? Object.keys(error.config.headers) : 'none'
-        })}`, "error");
-      }
-
-      // Log all enumerable properties of the error
-      printLog(`All error properties: ${JSON.stringify(Object.getOwnPropertyNames(error))}`, "error");
-
-      if (error.stack) {
-        printLog(`Error Stack: ${error.stack}`, "error");
-      }
-
-      console.error("Full error object:", error);
-      console.error("Error keys:", Object.keys(error));
-      console.error("Error values:", Object.values(error));
-    })
-    .finally(() => {
-      chrome.storage.local.set({ running: false });
-      chrome.runtime.sendMessage({ type: "stop" });
+    return new Eko({
+      llms,
+      agents,
+      callback,
+      planLlms: [config.llm]
     });
-  return eko;
+  } catch (e) {
+    printLog(`Init Error: ${e.message}`, "error");
+    return null;
+  }
 }
 
 function printLog(

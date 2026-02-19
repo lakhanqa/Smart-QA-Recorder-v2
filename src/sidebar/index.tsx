@@ -38,6 +38,7 @@ const AppRun = () => {
   const [streamLog, setStreamLog] = useState<LogMessage | null>();
   const [manualTestCases, setManualTestCases] = useState<ManualTestCase[]>([]);
   const [isGeneratingManual, setIsGeneratingManual] = useState(false);
+  const [isDiscovering, setIsDiscovering] = useState(false);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState(
     'Open Twitter, search for "Hitesh__22" and follow'
@@ -80,17 +81,50 @@ const AppRun = () => {
         setRecordedSteps(message.steps);
       } else if (message.type === 'MANUAL_TESTCASE_GENERATED') {
         setIsGeneratingManual(false);
+        setIsDiscovering(false);
         if (message.testcases) {
           try {
-            // AI might return JSON wrapped in backticks
-            const cleaned = message.testcases.replace(/```json\n?|```/g, '').trim();
-            const parsed = JSON.parse(cleaned);
-            setManualTestCases(Array.isArray(parsed) ? parsed : [parsed]);
-          } catch (e) {
+            let jsonStr = message.testcases.trim();
+
+            if (!jsonStr || jsonStr === "Discovery stopped by user.") {
+              setStreamLog({
+                time: new Date().toLocaleTimeString(),
+                log: "Discovery ended without generating a full test case report.",
+                level: "info"
+              });
+              return;
+            }
+
+            // 1. Try to find markdown code blocks first
+            const match = jsonStr.match(/```json\n?([\s\S]*?)\n?```/);
+            if (match) {
+              jsonStr = match[1];
+            } else {
+              // 2. Fallback: find the first '[' and last ']' (greedy approach for a JSON array)
+              const startIndex = jsonStr.indexOf('[');
+              const endIndex = jsonStr.lastIndexOf(']');
+              if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+                jsonStr = jsonStr.substring(startIndex, endIndex + 1);
+              }
+            }
+
+            const parsed = JSON.parse(jsonStr);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setManualTestCases(parsed);
+              chrome.runtime.sendMessage({ type: 'log', log: `Successfully generated ${parsed.length} test cases.`, level: 'success' });
+            } else {
+              chrome.runtime.sendMessage({ type: 'log', log: 'Discovery completed but no test cases were found in the output.', level: 'warn' });
+            }
+          } catch (e: any) {
             console.error('Failed to parse test cases:', e);
-            // Fallback: if it's not JSON, maybe it's still the old markdown or something went wrong
-            // For now, we expect JSON.
+            chrome.runtime.sendMessage({
+              type: 'log',
+              log: `Failed to parse AI response as JSON: ${e.message}. The AI might have returned a text summary instead of a structured table.`,
+              level: 'error'
+            });
           }
+        } else {
+          chrome.runtime.sendMessage({ type: 'log', log: 'Discovery finished with an empty response.', level: 'error' });
         }
       }
     };
@@ -142,9 +176,19 @@ const AppRun = () => {
     chrome.runtime.sendMessage({ type: 'GENERATE_MANUAL_TESTCASE' });
   };
 
+  const handleDeepScan = () => {
+    setManualTestCases([]);
+    setIsDiscovering(true);
+    chrome.runtime.sendMessage({ type: 'START_INTERACTIVE_DISCOVERY' });
+  };
+
+  const handleStopDiscovery = () => {
+    chrome.runtime.sendMessage({ type: 'STOP_INTERACTIVE_DISCOVERY' });
+  };
+
   const copyToClipboard = () => {
     const text = manualTestCases.map(tc =>
-      `ID: ${tc.id}\nTitle: ${tc.title}\nPreconditions: ${tc.preconditions}\nSteps: ${tc.steps}\nData: ${tc.data}\nExpected: ${tc.expected}\nActual: ${tc.actual}\nStatus: ${tc.status}\n${'-'.repeat(20)}`
+      `Test Case ID: ${tc.id}\nTest Scenario/Title: ${tc.title}\nPreconditions (Prerequisites): ${tc.preconditions}\nTest Steps: ${tc.steps}\nTest Data: ${tc.data}\nExpected Result: ${tc.expected}\nActual Result: ${tc.actual}\nStatus: ${tc.status}\n${'-'.repeat(20)}`
     ).join('\n\n');
 
     navigator.clipboard.writeText(text).then(() => {
@@ -158,7 +202,7 @@ const AppRun = () => {
     let fileName = `test_cases_${Date.now()}`;
 
     if (format === 'csv') {
-      const headers = ['Test Case ID', 'Test Title/Summary', 'Preconditions', 'Test Steps', 'Test Data', 'Expected Result', 'Actual Result', 'Status'];
+      const headers = ['Test Case ID', 'Test Scenario/Title', 'Preconditions (Prerequisites)', 'Test Steps', 'Test Data', 'Expected Result', 'Actual Result', 'Status'];
       const rows = manualTestCases.map(tc => [
         `"${tc.id.replace(/"/g, '""')}"`,
         `"${tc.title.replace(/"/g, '""')}"`,
@@ -173,7 +217,7 @@ const AppRun = () => {
       fileName += '.csv';
     } else {
       content = manualTestCases.map(tc =>
-        `ID: ${tc.id}\nTitle: ${tc.title}\nPreconditions: ${tc.preconditions}\nSteps: ${tc.steps}\nData: ${tc.data}\nExpected: ${tc.expected}\nActual: ${tc.actual}\nStatus: ${tc.status}\n${'='.repeat(40)}`
+        `Test Case ID: ${tc.id}\nTest Scenario/Title: ${tc.title}\nPreconditions (Prerequisites): ${tc.preconditions}\nTest Steps: ${tc.steps}\nTest Data: ${tc.data}\nExpected Result: ${tc.expected}\nActual Result: ${tc.actual}\nStatus: ${tc.status}\n${'='.repeat(40)}`
       ).join('\n\n');
       fileName += '.txt';
     }
@@ -190,11 +234,14 @@ const AppRun = () => {
   };
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', key: 'id', width: 80 },
-    { title: 'Title', dataIndex: 'title', key: 'title', width: 150 },
-    { title: 'Steps', dataIndex: 'steps', key: 'steps', width: 200, ellipsis: true },
-    { title: 'Expected', dataIndex: 'expected', key: 'expected', width: 200, ellipsis: true },
-    { title: 'Status', dataIndex: 'status', key: 'status', width: 90 },
+    { title: 'Test Case ID', dataIndex: 'id', key: 'id', width: 100 },
+    { title: 'Test Scenario/Title', dataIndex: 'title', key: 'title', width: 200 },
+    { title: 'Preconditions', dataIndex: 'preconditions', key: 'preconditions', width: 150, ellipsis: true },
+    { title: 'Test Steps', dataIndex: 'steps', key: 'steps', width: 250, ellipsis: true },
+    { title: 'Test Data', dataIndex: 'data', key: 'data', width: 120, ellipsis: true },
+    { title: 'Expected Result', dataIndex: 'expected', key: 'expected', width: 200, ellipsis: true },
+    { title: 'Actual Result', dataIndex: 'actual', key: 'actual', width: 150 },
+    { title: 'Status', dataIndex: 'status', key: 'status', width: 100 },
   ];
 
   const getLogStyle = (level: string) => {
@@ -218,15 +265,28 @@ const AppRun = () => {
         >
           {isRecording ? "Stop Recording" : "Start Interaction Recording"}
         </Button>
-        <Button
-          type="default"
-          onClick={handleGenerateManual}
-          loading={isGeneratingManual}
-          block
-          style={{ borderColor: '#722ed1', color: '#722ed1' }}
-        >
-          Generate Manual Testcases (AI)
-        </Button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <Button
+            type="default"
+            onClick={handleGenerateManual}
+            loading={isGeneratingManual}
+            style={{ flex: 1, borderColor: '#1890ff', color: '#1890ff' }}
+          >
+            Quick Scan
+          </Button>
+          <Button
+            type="default"
+            onClick={isDiscovering ? handleStopDiscovery : handleDeepScan}
+            loading={isDiscovering && !isGeneratingManual}
+            style={{
+              flex: 1,
+              borderColor: isDiscovering ? '#ff4d4f' : '#722ed1',
+              color: isDiscovering ? '#ff4d4f' : '#722ed1'
+            }}
+          >
+            {isDiscovering ? "Stop & Generate" : "Deep Scan (Discovery)"}
+          </Button>
+        </div>
       </div>
 
       {manualTestCases.length > 0 && (

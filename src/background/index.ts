@@ -1,5 +1,5 @@
 import { Eko } from "@eko-ai/eko";
-import { main, generateManualTestCases } from "./main";
+import { main, generateManualTestCases, exploreAndGenerateTestCases, stopDiscovery } from "./main";
 
 var eko: Eko;
 
@@ -94,6 +94,46 @@ chrome.runtime.onMessage.addListener(function (
         const errorMsg = e instanceof Error ? e.message : String(e);
         chrome.runtime.sendMessage({ type: 'log', log: 'Failed: ' + errorMsg, level: 'error' });
         chrome.runtime.sendMessage({ type: 'MANUAL_TESTCASE_GENERATED', error: errorMsg });
+      }
+    })();
+  } else if (request.type === 'START_INTERACTIVE_DISCOVERY') {
+    (async () => {
+      try {
+        chrome.runtime.sendMessage({ type: 'log', log: 'Starting Interactive AI Discovery (Deep Scan)...' });
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) {
+          throw new Error('No active tab found');
+        }
+
+        // Check if it's a restricted page
+        if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('about:') || tab.url.startsWith('chrome-extension://')) {
+          throw new Error('Cannot perform deep scan on this type of page. Please try on a regular website.');
+        }
+
+        chrome.runtime.sendMessage({ type: 'log', log: 'Agent is exploring the page to discover dynamic behaviors...' });
+
+        // Execute Discovery
+        const testcases = await exploreAndGenerateTestCases();
+
+        // 4. Send back to sidebar
+        chrome.runtime.sendMessage({ type: 'MANUAL_TESTCASE_GENERATED', testcases });
+        chrome.runtime.sendMessage({ type: 'log', log: 'Interactive discovery completed successfully!', level: 'success' });
+
+      } catch (e) {
+        console.error('Interactive discovery error:', e);
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        chrome.runtime.sendMessage({ type: 'log', log: 'Deep Scan Failed: ' + errorMsg, level: 'error' });
+        chrome.runtime.sendMessage({ type: 'MANUAL_TESTCASE_GENERATED', error: errorMsg });
+      }
+    })();
+  } else if (request.type === 'STOP_INTERACTIVE_DISCOVERY') {
+    (async () => {
+      try {
+        await stopDiscovery();
+        chrome.runtime.sendMessage({ type: 'log', log: 'Interactive discovery stopped by user.', level: 'info' });
+      } catch (e) {
+        console.error('Stop discovery error:', e);
       }
     })();
   }

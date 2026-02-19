@@ -14,6 +14,9 @@ importers:
       '@eko-ai/eko-extension':
         specifier: ^2.0.9
         version: 2.2.1(ai@4.3.19(react@18.3.1)(zod@3.25.76))
+      '@faker-js/faker':
+        specifier: ^10.3.0
+        version: 10.3.0
       antd:
         specifier: ^5.22.4
         version: 5.27.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -177,6 +180,10 @@ packages:
 
   '@emotion/unitless@0.7.5':
     resolution: {integrity: sha512-OWORNpfjMsSSUBVrRBVGECkhWcULOAJz9ZW8uK9qgxD+87M7jHRcvh/A96XXNhXTLmKcoYSQtBEX7lHMO7YRwg==}
+
+  '@faker-js/faker@10.3.0':
+    resolution: {integrity: sha512-It0Sne6P3szg7JIi6CgKbvTZoMjxBZhcv91ZrqrNuaZQfB5WoqYYbzCUOq89YR+VY8juY9M1vDWmDDa2TzfXCw==}
+    engines: {node: ^20.19.0 || ^22.13.0 || ^23.5.0 || >=24.0.0, npm: '>=10'}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1565,6 +1572,8 @@ snapshots:
   '@emotion/hash@0.8.0': {}
 
   '@emotion/unitless@0.7.5': {}
+
+  '@faker-js/faker@10.3.0': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
