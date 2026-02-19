@@ -1,0 +1,56 @@
+{
+  "name": "Smart QA Recorder",
+  "description": "Smart QA Recorder for browser interaction capture and AI test script generation",
+  "version": "1.3.0",
+  "manifest_version": 3,
+  "background": {
+    "type": "module",
+    "service_worker": "js/background.js"
+  },
+  "icons": {
+    "16": "icon.ico",
+    "48": "icon.ico",
+    "128": "icon.ico"
+  },
+  "side_panel": {
+    "default_path": "sidebar.html",
+    "openPanelOnActionClick": true
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "js/content_script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "windows",
+    "sidePanel",
+    "storage",
+    "scripting",
+    "alarms",
+    "notifications",
+    "debugger"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "resources": []
+    }
+  ]
+}
