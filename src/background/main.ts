@@ -234,7 +234,7 @@ export async function main(prompt: string): Promise<Eko> {
       });
     } catch (connectError) {
       printLog(`❌ Groq API connectivity test failed: ${connectError.message}`, "error");
-      printLog(`This may indicate network or CORS issues`, "error");
+      printLog(`This may be because of network or CORS issues check network tab once.`, "error");
     }
   }
 

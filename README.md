@@ -1,6 +1,6 @@
 # **Smart QA Recorder**
 
-A powerful Chromium extension for capturing browser interactions and generating AI-powered automation scripts, based on the [Smart QA Recorder] engine.
+A powerful Chromium extension for capturing browser interactions and generating AI-powered automation scripts, based on the Smart QA Recorder engine.
 
 ## Features
 
