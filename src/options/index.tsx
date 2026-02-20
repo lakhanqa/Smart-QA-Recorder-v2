@@ -55,6 +55,7 @@ const OptionsPage = () => {
     { value: "openrouter", label: "OpenRouter" },
   ];
 
+  //Add Model Providers you Like below update models if they are depricated by company in a case.
   const modelOptions = {
     anthropic: [
       { value: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet (default)" },
@@ -66,11 +67,10 @@ const OptionsPage = () => {
       { value: "gpt-4.1-mini", label: "gpt-4.1-mini" },
       { value: "gpt-4o-mini", label: "gpt-4o-mini" },
     ],
+    // Updated Models For the Code to Work with the Newer Version of the API
     google: [
-      { value: "gemini-2.0-flash-exp", label: "Gemini 2.0 Flash (Experimental)" },
-      { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-      { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
       { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { value: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
 
     ],
     groq: [
