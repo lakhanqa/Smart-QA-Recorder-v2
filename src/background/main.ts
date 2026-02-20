@@ -118,7 +118,15 @@ Return ONLY the JSON array inside markdown code blocks.`;
         resolve(res.result);
       })
       .catch(async err => {
-        if (err?.name === "AbortError" || err?.message?.includes("abort")) {
+        const isAbort =
+          err?.name === "AbortError" ||
+          err?.message?.toLowerCase().includes("abort") ||
+          err?.message?.toLowerCase().includes("interrupted") ||
+          err?.message?.toLowerCase().includes("cancelled");
+
+        printLog(`Discovery catch: ${err?.name} - ${err?.message}`, "info");
+
+        if (isAbort) {
           printLog("Discovery aborted by user. Generating summary from current results...", "info");
           try {
             const config = await getLLMConfig();
@@ -127,10 +135,11 @@ Return ONLY the JSON array inside markdown code blocks.`;
               const result = await callLLM(summaryPrompt, config);
               resolve(result);
             } else {
-              resolve("Discovery stopped by user.");
+              reject(new Error("LLM not configured"));
             }
-          } catch (summaryErr) {
-            resolve("Discovery stopped by user.");
+          } catch (summaryErr: any) {
+            printLog("Summary generation failed: " + summaryErr?.message, "error");
+            reject(summaryErr);
           }
         } else {
           reject(err);
