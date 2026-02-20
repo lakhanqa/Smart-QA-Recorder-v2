@@ -1,7 +1,7 @@
 {
   "name": "Smart QA Recorder",
   "description": "Smart QA Recorder for browser interaction capture and AI test script generation",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "manifest_version": 3,
   "background": {
     "type": "module",

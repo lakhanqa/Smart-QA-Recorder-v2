@@ -1,6 +1,6 @@
 {
   "name": "smart-qa-recorder",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Smart QA Recorder for browser interaction capture and AI test script generation",
   "scripts": {
     "build": "webpack --config webpack.js",
