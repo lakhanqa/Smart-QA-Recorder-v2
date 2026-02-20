@@ -41,7 +41,7 @@ const AppRun = () => {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState(
-    'Open Twitter, search for "Hitesh__22" and follow'
+    ''
   );
 
   useEffect(() => {
@@ -277,7 +277,6 @@ const AppRun = () => {
           <Button
             type="default"
             onClick={isDiscovering ? handleStopDiscovery : handleDeepScan}
-            loading={isDiscovering && !isGeneratingManual}
             style={{
               flex: 1,
               borderColor: isDiscovering ? '#ff4d4f' : '#722ed1',
