@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
 import React, { useState, useRef, useEffect } from "react";
-import { Button, Input, List, Typography, Divider, Table } from "antd";
+import { Button, Input, List, Typography, Divider, Table, Radio } from "antd";
 
 const { Text } = Typography;
 
@@ -12,7 +12,8 @@ interface LogMessage {
 
 interface RecordedStep {
   type: string;
-  locator: string;
+  locators?: { playwright: string; css: string; xpath: string; };
+  locator?: string; // fallback for backwards compatibility
   value?: string;
   timestamp: number;
   tagName: string;
@@ -30,6 +31,8 @@ interface ManualTestCase {
   status: string;
 }
 
+type ScriptFramework = 'playwright-ts' | 'playwright-js' | 'java-selenium' | 'pytest';
+
 const AppRun = () => {
   const [running, setRunning] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -39,6 +42,10 @@ const AppRun = () => {
   const [manualTestCases, setManualTestCases] = useState<ManualTestCase[]>([]);
   const [isGeneratingManual, setIsGeneratingManual] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
+
+  const [scriptFramework, setScriptFramework] = useState<ScriptFramework>('playwright-ts');
+  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState(
     ''
@@ -79,6 +86,22 @@ const AppRun = () => {
         }
       } else if (message.type === 'UPDATE_STEPS') {
         setRecordedSteps(message.steps);
+      } else if (message.type === 'TEST_SCRIPT_GENERATED') {
+        setIsGeneratingScript(false);
+        if (message.script && message.extension) {
+          const blob = new Blob([message.script], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `automation_script${message.extension}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          chrome.runtime.sendMessage({ type: 'log', log: `Successfully generated and downloaded test script.`, level: 'success' });
+        } else {
+          chrome.runtime.sendMessage({ type: 'log', log: message.error || `Failed to generate test script.`, level: 'error' });
+        }
       } else if (message.type === 'MANUAL_TESTCASE_GENERATED') {
         setIsGeneratingManual(false);
         setIsDiscovering(false);
@@ -162,11 +185,25 @@ const AppRun = () => {
     }
   };
 
+  const handleGenerateScriptClick = () => {
+    if (recordedSteps.length === 0) {
+      chrome.runtime.sendMessage({ type: 'log', log: 'No recorded steps available to generate a script.', level: 'error' });
+      return;
+    }
+    setIsGeneratingScript(true);
+    chrome.runtime.sendMessage({
+      type: 'GENERATE_TEST_SCRIPT',
+      framework: scriptFramework,
+      steps: recordedSteps
+    });
+  };
+
   const generateAIScript = () => {
     if (recordedSteps.length === 0) return;
 
-    const stepsSummary = recordedSteps.map(s => `- ${s.type} on ${s.locator} ${s.value ? `with value "${s.value}"` : ''}`).join('\n');
-    const newPrompt = `Convert these recorded interactions into a clean automation script:\n${stepsSummary}`;
+    // Use JSON to ensure locators structure remains intact
+    const stepsSummary = JSON.stringify(recordedSteps, null, 2);
+    const newPrompt = `Convert these recorded interactions (provided in JSON) into a clean automation script using ${scriptFramework}:\n${stepsSummary}`;
     setPrompt(newPrompt);
   };
 
@@ -330,7 +367,18 @@ const AppRun = () => {
             dataSource={recordedSteps}
             renderItem={(step) => (
               <List.Item>
-                <Text code>{step.type}</Text> <Text type="secondary" style={{ fontSize: '10px' }}>{step.locator}</Text>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <Text code>{step.type}</Text>
+                  {step.locators ? (
+                    <>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>Playwright: {step.locators.playwright}</Text>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>CSS: {step.locators.css}</Text>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>XPath: {step.locators.xpath}</Text>
+                    </>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: '10px' }}>{step.locator}</Text>
+                  )}
+                </div>
               </List.Item>
             )}
             style={{ maxHeight: '150px', overflowY: 'auto', marginTop: '4px', backgroundColor: '#fafafa' }}
@@ -349,6 +397,21 @@ const AppRun = () => {
       <Divider style={{ margin: '12px 0' }} />
 
       <div>Prompt:</div>
+
+      <div style={{ marginBottom: '8px' }}>
+        <Text strong style={{ fontSize: '12px' }}>Script Generation Options:</Text>
+        <Radio.Group
+          onChange={(e) => setScriptFramework(e.target.value)}
+          value={scriptFramework}
+          style={{ display: 'flex', flexDirection: 'column', marginTop: '4px', fontSize: '11px' }}
+        >
+          <Radio style={{ fontSize: '11px' }} value="playwright-ts">Playwright (TypeScript)</Radio>
+          <Radio style={{ fontSize: '11px' }} value="playwright-js">Playwright (JavaScript)</Radio>
+          <Radio style={{ fontSize: '11px' }} value="java-selenium">Java Selenium</Radio>
+          <Radio style={{ fontSize: '11px' }} value="pytest">Pytest</Radio>
+        </Radio.Group>
+      </div>
+
       <div style={{ textAlign: "center", marginTop: "4px" }}>
         <Input.TextArea
           ref={textAreaRef}
@@ -358,17 +421,31 @@ const AppRun = () => {
           placeholder="Describe what you want to automate..."
           onChange={(e) => setPrompt(e.target.value)}
         />
-        <Button
-          type="primary"
-          onClick={handleRunClick}
-          style={{
-            marginTop: "8px",
-            width: '100%',
-            background: running ? "#6666" : "#1677ff",
-          }}
-        >
-          {running ? "Running AI..." : "Run Automation"}
-        </Button>
+        <div style={{ display: 'flex', gap: '8px', marginTop: "8px" }}>
+          <Button
+            type="primary"
+            onClick={handleRunClick}
+            style={{
+              flex: 1,
+              background: running ? "#666666" : "#1677ff",
+            }}
+          >
+            {running ? "Running AI..." : "Run Automation"}
+          </Button>
+
+          <Button
+            type="primary"
+            onClick={handleGenerateScriptClick}
+            loading={isGeneratingScript}
+            disabled={recordedSteps.length === 0}
+            style={{
+              flex: 1,
+              background: (recordedSteps.length === 0 || isGeneratingScript) ? "#666666" : "#52c41a",
+            }}
+          >
+            Download Script
+          </Button>
+        </div>
       </div>
 
       {logs.length > 0 && (

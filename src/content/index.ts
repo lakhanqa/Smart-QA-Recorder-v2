@@ -7,13 +7,13 @@ function handleEvent(event: Event) {
     if (!isRecording) return;
 
     const target = event.target as HTMLElement;
-    if (!target) return;
+    if (!target || !target.tagName) return;
 
     // Don't record interactions with the extension's own UI if it were injected (not the case here but good practice)
 
     const step = {
         type: event.type,
-        locator: LocatorGenerator.generateLocator(target),
+        locators: LocatorGenerator.generateLocators(target),
         value: (target as HTMLInputElement).value,
         timestamp: Date.now(),
         tagName: target.tagName,
@@ -27,14 +27,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'START_RECORDING') {
         isRecording = true;
         console.log('Smart QA Recorder: Advanced Recording enabled');
+
+        // Capture initial URL when explicitly starting
+        chrome.runtime.sendMessage({
+            type: 'RECORDED_STEP',
+            step: {
+                type: 'navigate',
+                locators: { playwright: '', css: '', xpath: '' },
+                value: window.location.href,
+                timestamp: Date.now(),
+                tagName: 'PAGE',
+                innerText: document.title
+            }
+        });
+        sendResponse({ success: true });
     } else if (message.type === 'STOP_RECORDING') {
         isRecording = false;
         console.log('Smart QA Recorder: Recording stopped');
+        sendResponse({ success: true });
     } else if (message.type === 'GET_PAGE_CONTEXT') {
         const context = extractPageContext();
         sendResponse({ type: 'PAGE_CONTEXT_RESPONSE', context });
     }
-    return true; // Allow async responses
+});
+
+// Check if recording is already active (e.g., after page navigation)
+chrome.runtime.sendMessage({ type: 'CHECK_RECORDING_STATE' }, (response) => {
+    if (response && response.isRecording) {
+        isRecording = response.isRecording;
+        console.log('Smart QA Recorder: Resumed recording after navigation');
+
+        // Optionally capture navigation step here if needed
+        chrome.runtime.sendMessage({
+            type: 'RECORDED_STEP',
+            step: {
+                type: 'navigate',
+                locators: { playwright: '', css: '', xpath: '' },
+                value: window.location.href,
+                timestamp: Date.now(),
+                tagName: 'PAGE',
+                innerText: document.title
+            }
+        });
+    }
 });
 
 function extractPageContext() {

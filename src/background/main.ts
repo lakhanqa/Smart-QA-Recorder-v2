@@ -485,6 +485,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     printLog("Recording stopped. Captured " + recordedSteps.length + " steps.", "success");
     return true; // Async response
+  } else if (message.type === 'GENERATE_TEST_SCRIPT') {
+    const { framework, steps } = message;
+
+    // Map framework to extension
+    let extension = '.spec.ts';
+    if (framework === 'playwright-js') extension = '.spec.js';
+    else if (framework === 'java-selenium') extension = '.java';
+    else if (framework === 'pytest') extension = '_test.py';
+
+    const prompt = `Write a clean ${framework} automation script for the following recorded web interactions:\n${JSON.stringify(steps, null, 2)}\nProvide ONLY the code. Do not include markdown code block formatting like \`\`\`typescript, just the raw code.`;
+
+    getLLMConfig().then(config => {
+      if (!config || !config.apiKey) {
+        chrome.runtime.sendMessage({ type: 'TEST_SCRIPT_GENERATED', error: "LLM not configured." });
+        return;
+      }
+      callLLM(prompt, config)
+        .then(script => {
+          // Clean up potential markdown blocks if AI ignored instruction
+          let cleanScript = script.trim();
+          const match = cleanScript.match(/```[a-z]*\n?([\s\S]*?)\n?```/i);
+          if (match) cleanScript = match[1].trim();
+
+          chrome.runtime.sendMessage({
+            type: 'TEST_SCRIPT_GENERATED',
+            script: cleanScript,
+            extension
+          });
+        })
+        .catch(err => {
+          chrome.runtime.sendMessage({ type: 'TEST_SCRIPT_GENERATED', error: err.message });
+        });
+    });
+
+    return true; // Async response
   } else if (message.type === 'RECORDED_STEP') {
     if (isRecording) {
       recordedSteps.push(message.step);
@@ -498,6 +533,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false; // Keep it simple
   } else if (message.type === 'GET_RECORDED_STEPS') {
     sendResponse({ steps: recordedSteps, isRecording });
+    return false;
+  } else if (message.type === 'CHECK_RECORDING_STATE') {
+    sendResponse({ isRecording });
     return false;
   }
 });
@@ -525,12 +563,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (isRecording) {
-    printLog("Debugger detached: " + reason, "error");
-    isRecording = false;
-    chrome.runtime.sendMessage({ type: 'STOP_RECORDING' }, () => {
-      if (chrome.runtime.lastError) {
-        // Ignore
-      }
-    });
+    printLog("Debugger detached: " + reason + " (Note: Interaction recording will continue over navigations)", "error");
+    // We intentionally DO NOT set isRecording = false here.
+    // Cross-origin navigations can legitimately detach the debugger, but we want the 
+    // content script to continue capturing user interactions when the next page loads.
   }
 });

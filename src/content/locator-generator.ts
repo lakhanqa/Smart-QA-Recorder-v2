@@ -20,6 +20,12 @@ export interface ElementData {
     isSVG?: boolean;
 }
 
+export interface GeneratedLocators {
+    playwright: string;
+    css: string;
+    xpath: string;
+}
+
 export const LocatorGenerator = {
     inferRole(tagName: string, type?: string): string | null {
         const roleMap: Record<string, any> = {
@@ -54,7 +60,7 @@ export const LocatorGenerator = {
         return roleMap[tag] || null;
     },
 
-    generateLocator(el: HTMLElement): string {
+    generateLocators(el: HTMLElement): GeneratedLocators {
         const tagName = el.tagName.toLowerCase();
         const type = (el as HTMLInputElement).type;
         const role = el.getAttribute('role') || this.inferRole(tagName, type);
@@ -65,40 +71,73 @@ export const LocatorGenerator = {
         const placeholder = (el as HTMLInputElement).placeholder;
         const labelText = this.getLabelText(el);
 
-        // Priority 1: Test ID
-        if (dataTestId) {
-            return `page.getByTestId('${dataTestId}')`;
-        }
+        let playwright = '';
+        let css = '';
+        let xpath = `//${tagName}`; // default fallback xpath
 
-        // Priority 2: Role with Name
         const accessibleName = ariaLabel || labelText || text;
-        if (role && accessibleName) {
-            return `page.getByRole('${role}', { name: '${this.escape(accessibleName)}' })`;
+        const escapedText = accessibleName ? this.escape(accessibleName) : '';
+
+        // Playwright logic
+        if (dataTestId) {
+            playwright = `page.getByTestId('${dataTestId}')`;
+        } else if (role && accessibleName) {
+            playwright = `page.getByRole('${role}', { name: '${escapedText}' })`;
+        } else if (['input', 'textarea', 'select'].includes(tagName) && labelText) {
+            playwright = `page.getByLabel('${this.escape(labelText)}')`;
+        } else if (placeholder) {
+            playwright = `page.getByPlaceholder('${this.escape(placeholder)}')`;
+        } else if (id) {
+            playwright = `page.locator('#${id}')`;
+        } else if (text && text.length > 0) {
+            playwright = `page.getByText('${this.escape(text)}')`;
+        } else {
+            const className = Array.from(el.classList).join('.');
+            playwright = className ? `${tagName}.${className}` : tagName;
         }
 
-        // Priority 3: Label (for inputs)
-        if (['input', 'textarea', 'select'].includes(tagName) && labelText) {
-            return `page.getByLabel('${this.escape(labelText)}')`;
-        }
-
-        // Priority 4: Placeholder
-        if (placeholder) {
-            return `page.getByPlaceholder('${this.escape(placeholder)}')`;
-        }
-
-        // Priority 5: ID
+        // CSS logic
         if (id) {
-            return `page.locator('#${id}')`;
+            css = `#${id}`;
+        } else if (dataTestId) {
+            css = `[data-testid="${dataTestId}"]`;
+        } else if (el.getAttribute('data-test-id')) {
+            css = `[data-test-id="${el.getAttribute('data-test-id')}"]`;
+        } else if ((el as any).name) {
+            css = `${tagName}[name="${(el as any).name}"]`;
+        } else if (placeholder) {
+            css = `${tagName}[placeholder="${placeholder}"]`;
+        } else {
+            const classNames = Array.from(el.classList).join('.');
+            css = classNames ? `${tagName}.${classNames}` : tagName;
+
+            // For simple tags without classes/ids to identify them uniquely among siblings, 
+            // nth-child is an option but might be brittle without full path generation.
+            // Returning tag with class is decent for typical recordings.
         }
 
-        // Priority 6: Text (if not caught by role)
-        if (text && text.length > 0) {
-            return `page.getByText('${this.escape(text)}')`;
+        // XPath logic
+        if (id) {
+            xpath = `//*[@id='${id}']`;
+        } else if (dataTestId) {
+            xpath = `//*[@data-testid='${dataTestId}']`;
+        } else if (el.getAttribute('data-test-id')) {
+            xpath = `//*[@data-test-id='${el.getAttribute('data-test-id')}']`;
+        } else if (text && text.length > 0) {
+            xpath = `//${tagName}[contains(text(), '${this.escape(text)}')]`;
+        } else if (placeholder) {
+            xpath = `//${tagName}[@placeholder='${placeholder}']`;
+        } else if ((el as any).name) {
+            xpath = `//${tagName}[@name='${(el as any).name}']`;
+        } else if (el.classList.length > 0) {
+            xpath = `//${tagName}[@class='${Array.from(el.classList).join(' ')}']`;
         }
 
-        // Fallback: tag and class
-        const className = Array.from(el.classList).join('.');
-        return className ? `${tagName}.${className}` : tagName;
+        return {
+            playwright,
+            css,
+            xpath
+        };
     },
 
     getLabelText(el: HTMLElement): string | null {
