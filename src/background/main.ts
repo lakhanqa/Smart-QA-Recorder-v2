@@ -10,10 +10,12 @@ let activeTaskId: string | null = null;
 
 export async function stopDiscovery(): Promise<void> {
   if (activeEko && activeTaskId) {
-    const task = activeEko.getTask(activeTaskId);
-    if (task) {
-      task.abort();
+    try {
+      const taskId = activeTaskId;
+      activeEko.abortTask(taskId);
       printLog("Stopping discovery and generating test cases...", "info");
+    } catch (e: any) {
+      printLog("Could not abort task: " + e.message, "error");
     }
     activeEko = null;
     activeTaskId = null;

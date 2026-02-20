@@ -105,7 +105,7 @@ const AppRun = () => {
       } else if (message.type === 'MANUAL_TESTCASE_GENERATED') {
         setIsGeneratingManual(false);
         setIsDiscovering(false);
-        if (message.testcases) {
+        if (message.testcases && typeof message.testcases === 'string') {
           try {
             let jsonStr = message.testcases.trim();
 

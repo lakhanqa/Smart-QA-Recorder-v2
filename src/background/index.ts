@@ -48,19 +48,8 @@ chrome.runtime.onMessage.addListener(function (
 
         chrome.runtime.sendMessage({ type: 'log', log: 'Ensuring content script is ready...' });
 
-        // Ensure content script is injected
-        try {
-          await chrome.tabs.sendMessage(tab.id, { type: 'PING' });
-        } catch (e) {
-          // If message fails, try injecting the script
-          chrome.runtime.sendMessage({ type: 'log', log: 'Injecting content script...' });
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['js/content_script.js']
-          });
-          // Wait a bit for script to initialize
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        // Content script is already injected via manifest.json at document_idle.
+        // No manual injection needed.
 
         chrome.runtime.sendMessage({ type: 'log', log: 'Capturing page context...' });
 
