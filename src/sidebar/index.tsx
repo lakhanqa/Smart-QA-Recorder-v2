@@ -290,8 +290,9 @@ const AppRun = () => {
   };
 
   return (
-    <div style={{ padding: '10px' }}>
-      <Typography.Title level={4}>Smart QA Recorder</Typography.Title>
+    <div style={{ padding: '10px', height: '100vh', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflowY: 'auto', paddingRight: '2px' }}>
+        <Typography.Title level={4}>Smart QA Recorder</Typography.Title>
 
       <div style={{ marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <Button
@@ -448,48 +449,54 @@ const AppRun = () => {
         </div>
       </div>
 
-      {logs.length > 0 && (
-        <div
-          style={{
-            marginTop: "16px",
-            textAlign: "left",
-            border: "1px solid #d9d9d9",
-            borderRadius: "4px",
-            padding: "8px",
-            overflowY: "auto",
-            backgroundColor: "#f5f5f5",
-          }}
-        >
-          <div style={{ fontWeight: "bold", marginBottom: "8px" }}>Execution Logs:</div>
-          {logs.map((log, index) => (
-            <pre
-              key={index}
-              style={{
-                margin: "2px 0",
-                fontSize: "11px",
-                fontFamily: "monospace",
-                whiteSpace: "pre-wrap",
-                ...getLogStyle(log.level || "info"),
-              }}
-            >
-              [{log.time}] {log.log}
-            </pre>
-          ))}
-          {streamLog && (
-            <pre
-              style={{
-                margin: "2px 0",
-                fontSize: "11px",
-                fontFamily: "monospace",
-                whiteSpace: "pre-wrap",
-                ...getLogStyle(streamLog.level || "info"),
-              }}
-            >
-              [{streamLog.time}] {streamLog.log}
-            </pre>
-          )}
-        </div>
-      )}
+        {logs.length > 0 && (
+          <div
+            style={{
+              marginTop: "16px",
+              textAlign: "left",
+              border: "1px solid #d9d9d9",
+              borderRadius: "4px",
+              padding: "8px",
+              overflowY: "auto",
+              backgroundColor: "#f5f5f5",
+            }}
+          >
+            <div style={{ fontWeight: "bold", marginBottom: "8px" }}>Execution Logs:</div>
+            {logs.map((log, index) => (
+              <pre
+                key={index}
+                style={{
+                  margin: "2px 0",
+                  fontSize: "11px",
+                  fontFamily: "monospace",
+                  whiteSpace: "pre-wrap",
+                  ...getLogStyle(log.level || "info"),
+                }}
+              >
+                [{log.time}] {log.log}
+              </pre>
+            ))}
+            {streamLog && (
+              <pre
+                style={{
+                  margin: "2px 0",
+                  fontSize: "11px",
+                  fontFamily: "monospace",
+                  whiteSpace: "pre-wrap",
+                  ...getLogStyle(streamLog.level || "info"),
+                }}
+              >
+                [{streamLog.time}] {streamLog.log}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: '4px', opacity: 0.85, flexShrink: 0 }}>
+        <img src={chrome.runtime.getURL('logo.svg')} alt="Brand" style={{ height: 16, display: 'block' }} />
+        <span style={{ fontSize: '11px', color: '#888', lineHeight: 1.2, textAlign: 'center' }}>Innovated by Hitesh & Lakhan | Certa AI Hackathon</span>
+      </div>
     </div>
   );
 };

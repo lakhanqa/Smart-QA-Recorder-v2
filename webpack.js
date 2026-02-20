@@ -36,7 +36,10 @@ module.exports = {
   },
   plugins: [
     new CopyWebpackPlugin({
-      patterns: [{ from: "public", to: "../" }],
+      patterns: [
+        { from: "public", to: "../" },
+        { from: "logo.svg", to: "../logo.svg" }
+      ],
       options: {},
     }),
   ],

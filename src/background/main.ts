@@ -348,6 +348,7 @@ export async function initializeEko(prompt: string): Promise<Eko | null> {
   (Log as any).setLevel(0); // 0 = LogLevel.DEBUG
 
   const llms: LLMs = {
+    default: config.llm,
     [config.llm]: {
       provider: config.llm === 'groq' ? 'openai' : config.llm as any,
       model: config.modelName,
