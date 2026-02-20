@@ -1,4 +1,4 @@
-# **Smart QA Recorder**
+# **Smart QA Recorder For Certa AI Hackathon**
 
 A powerful Chromium extension for capturing browser interactions and generating AI-powered automation scripts, based on the Smart QA Recorder engine.
 
