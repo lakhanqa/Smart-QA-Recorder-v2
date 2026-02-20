@@ -115,12 +115,21 @@ Return ONLY the JSON array inside markdown code blocks.`;
       .then(res => {
         resolve(res.result);
       })
-      .catch(err => {
+      .catch(async err => {
         if (err?.name === "AbortError" || err?.message?.includes("abort")) {
-          printLog("Discovery aborted. Finalizing report...", "success");
-          // If aborted, we could potentially call a summary LLM here,
-          // but for now we'll just resolve with it.
-          resolve("Discovery stopped by user.");
+          printLog("Discovery aborted by user. Generating summary from current results...", "info");
+          try {
+            const config = await getLLMConfig();
+            if (config && config.apiKey) {
+              const summaryPrompt = `Based on a partial browser discovery session that was stopped early, generate a set of discovered test cases. Return ONLY a JSON array inside markdown code blocks. Each object must have these 8 fields: "id", "title", "preconditions", "steps", "data", "expected", "actual" (set to "Pending"), "status" (set to "Not Run"). Generate at least 3-5 plausible test cases based on common web app patterns.`;
+              const result = await callLLM(summaryPrompt, config);
+              resolve(result);
+            } else {
+              resolve("Discovery stopped by user.");
+            }
+          } catch (summaryErr) {
+            resolve("Discovery stopped by user.");
+          }
         } else {
           reject(err);
         }
