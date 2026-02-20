@@ -67,10 +67,10 @@ pnpm run build:verbose
 
 ### Example Commands
 
-- "Open Twitter, search for 'Smart QA Recorder' and follow"
+- "Open a Website Record Clicks & Action, Then Generate Script for it in (JS,PY,Java)"
 - "Navigate to Gmail and compose an email"
-- "Find and download the latest Chrome extension docs"
-- "Search Google for React tutorials and bookmark the first 3 results"
+- "Fill the Workflow in Certa tenent with URL given to QA Bot"
+- "Search Google for Certa and bookmark the result"
 
 ## API Keys Setup
 
