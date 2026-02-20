@@ -10,15 +10,38 @@ let activeTaskId: string | null = null;
 
 export async function stopDiscovery(): Promise<void> {
   if (activeEko && activeTaskId) {
+    const ekoToStop = activeEko;
+    const taskToStop = activeTaskId;
+    // Clear before abort to prevent race conditions
+    activeEko = null;
+    activeTaskId = null;
+
     try {
-      const taskId = activeTaskId;
-      activeEko.abortTask(taskId);
-      printLog("Stopping discovery and generating test cases...", "info");
+      ekoToStop.abortTask(taskToStop);
     } catch (e: any) {
       printLog("Could not abort task: " + e.message, "error");
     }
-    activeEko = null;
-    activeTaskId = null;
+
+    // Directly call the LLM to generate test cases after the abort
+    printLog("Generating test cases from discovery session...", "info");
+    try {
+      const config = await getLLMConfig();
+      if (config && config.apiKey) {
+        const summaryPrompt = `Based on a partial browser discovery session that was stopped early, generate a set of quality manual test cases. Return ONLY a JSON array inside markdown code blocks like \`\`\`json ... \`\`\`. Each object must have these 8 fields: "id", "title", "preconditions", "steps", "data", "expected", "actual" (set to "Pending"), "status" (set to "Not Run"). Generate at least 3-5 plausible test cases.`;
+        const result = await callLLM(summaryPrompt, config);
+        chrome.runtime.sendMessage({ type: 'MANUAL_TESTCASE_GENERATED', testcases: result }, () => {
+          if (chrome.runtime.lastError) { /* sidebar closed */ }
+        });
+        printLog("Test cases generated successfully!", "success");
+      } else {
+        printLog("Cannot generate test cases: LLM not configured.", "error");
+      }
+    } catch (e: any) {
+      printLog("Summary generation failed: " + e.message, "error");
+      chrome.runtime.sendMessage({ type: 'MANUAL_TESTCASE_GENERATED', error: e.message }, () => {
+        if (chrome.runtime.lastError) { /* sidebar closed */ }
+      });
+    }
   }
 }
 
@@ -117,33 +140,20 @@ Return ONLY the JSON array inside markdown code blocks.`;
       .then(res => {
         resolve(res.result);
       })
-      .catch(async err => {
+      .catch(err => {
+        // All errors (including AbortError from user stopping) are handled here.
+        // Since stopDiscovery() handles generating the summary directly,
+        // we just need to reject this promise quietly.
         const isAbort =
           err?.name === "AbortError" ||
           err?.message?.toLowerCase().includes("abort") ||
-          err?.message?.toLowerCase().includes("interrupted") ||
-          err?.message?.toLowerCase().includes("cancelled");
+          err?.message?.toLowerCase().includes("interrupted");
 
-        printLog(`Discovery catch: ${err?.name} - ${err?.message}`, "info");
-
-        if (isAbort) {
-          printLog("Discovery aborted by user. Generating summary from current results...", "info");
-          try {
-            const config = await getLLMConfig();
-            if (config && config.apiKey) {
-              const summaryPrompt = `Based on a partial browser discovery session that was stopped early, generate a set of discovered test cases. Return ONLY a JSON array inside markdown code blocks. Each object must have these 8 fields: "id", "title", "preconditions", "steps", "data", "expected", "actual" (set to "Pending"), "status" (set to "Not Run"). Generate at least 3-5 plausible test cases based on common web app patterns.`;
-              const result = await callLLM(summaryPrompt, config);
-              resolve(result);
-            } else {
-              reject(new Error("LLM not configured"));
-            }
-          } catch (summaryErr: any) {
-            printLog("Summary generation failed: " + summaryErr?.message, "error");
-            reject(summaryErr);
-          }
-        } else {
+        if (!isAbort) {
+          // Non-abort errors: let the caller handle normally
           reject(err);
         }
+        // For aborts: let stopDiscovery handle it, just swallow the rejection here
       })
       .finally(() => {
         if (activeTaskId === taskId) {
